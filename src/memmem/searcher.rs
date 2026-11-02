@@ -266,11 +266,17 @@ struct TwoWayWithPrefilter {
 
 /// The type of a substring search function.
 ///
+/// This uses the `C` ABI, even though only Rust calls these functions, because
+/// a `C` function cannot unwind. A call through this pointer is otherwise
+/// opaque to the optimizer, so every caller would carry an unwind edge that no
+/// search routine can take.
+///
 /// # Safety
 ///
 /// When using a function of this type, callers must ensure that the correct
 /// function is paired with the value populated in `SearcherKind` union.
-type SearcherKindFn = unsafe fn(
+#[allow(improper_ctypes_definitions)]
+type SearcherKindFn = unsafe extern "C" fn(
     searcher: &Searcher,
     prestate: &mut PrefilterState,
     haystack: &[u8],
@@ -283,7 +289,8 @@ type SearcherKindFn = unsafe fn(
 /// # Safety
 ///
 /// Callers must ensure that the `searcher.kind.empty` union field is set.
-unsafe fn searcher_kind_empty(
+#[allow(improper_ctypes_definitions)]
+unsafe extern "C" fn searcher_kind_empty(
     _searcher: &Searcher,
     _prestate: &mut PrefilterState,
     _haystack: &[u8],
@@ -298,7 +305,8 @@ unsafe fn searcher_kind_empty(
 /// # Safety
 ///
 /// Callers must ensure that the `searcher.kind.one_byte` union field is set.
-unsafe fn searcher_kind_one_byte(
+#[allow(improper_ctypes_definitions)]
+unsafe extern "C" fn searcher_kind_one_byte(
     searcher: &Searcher,
     _prestate: &mut PrefilterState,
     haystack: &[u8],
@@ -315,7 +323,8 @@ unsafe fn searcher_kind_one_byte(
 /// # Safety
 ///
 /// Callers must ensure that the `searcher.kind.two_way` union field is set.
-unsafe fn searcher_kind_two_way(
+#[allow(improper_ctypes_definitions)]
+unsafe extern "C" fn searcher_kind_two_way(
     searcher: &Searcher,
     _prestate: &mut PrefilterState,
     haystack: &[u8],
@@ -336,7 +345,8 @@ unsafe fn searcher_kind_two_way(
 ///
 /// Callers must ensure that the `searcher.kind.two_way_with_prefilter` union
 /// field is set.
-unsafe fn searcher_kind_two_way_with_prefilter(
+#[allow(improper_ctypes_definitions)]
+unsafe extern "C" fn searcher_kind_two_way_with_prefilter(
     searcher: &Searcher,
     prestate: &mut PrefilterState,
     haystack: &[u8],
@@ -359,7 +369,8 @@ unsafe fn searcher_kind_two_way_with_prefilter(
 ///
 /// Callers must ensure that the `searcher.kind.sse2` union field is set.
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-unsafe fn searcher_kind_sse2(
+#[allow(improper_ctypes_definitions)]
+unsafe extern "C" fn searcher_kind_sse2(
     searcher: &Searcher,
     _prestate: &mut PrefilterState,
     haystack: &[u8],
@@ -380,7 +391,8 @@ unsafe fn searcher_kind_sse2(
 ///
 /// Callers must ensure that the `searcher.kind.avx2` union field is set.
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-unsafe fn searcher_kind_avx2(
+#[allow(improper_ctypes_definitions)]
+unsafe extern "C" fn searcher_kind_avx2(
     searcher: &Searcher,
     _prestate: &mut PrefilterState,
     haystack: &[u8],
@@ -401,7 +413,8 @@ unsafe fn searcher_kind_avx2(
 ///
 /// Callers must ensure that the `searcher.kind.simd128` union field is set.
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-unsafe fn searcher_kind_simd128(
+#[allow(improper_ctypes_definitions)]
+unsafe extern "C" fn searcher_kind_simd128(
     searcher: &Searcher,
     _prestate: &mut PrefilterState,
     haystack: &[u8],
@@ -422,7 +435,8 @@ unsafe fn searcher_kind_simd128(
 ///
 /// Callers must ensure that the `searcher.kind.neon` union field is set.
 #[cfg(target_arch = "aarch64")]
-unsafe fn searcher_kind_neon(
+#[allow(improper_ctypes_definitions)]
+unsafe extern "C" fn searcher_kind_neon(
     searcher: &Searcher,
     _prestate: &mut PrefilterState,
     haystack: &[u8],
@@ -767,12 +781,15 @@ union PrefilterKind {
 
 /// The type of a prefilter function.
 ///
+/// This uses the `C` ABI for the same reason as [`SearcherKindFn`].
+///
 /// # Safety
 ///
 /// When using a function of this type, callers must ensure that the correct
 /// function is paired with the value populated in `PrefilterKind` union.
+#[allow(improper_ctypes_definitions)]
 type PrefilterKindFn =
-    unsafe fn(strat: &Prefilter, haystack: &[u8]) -> Option<usize>;
+    unsafe extern "C" fn(strat: &Prefilter, haystack: &[u8]) -> Option<usize>;
 
 /// Reads from the `fallback` field of `PrefilterKind` to execute the fallback
 /// prefilter. Works on all platforms.
@@ -780,7 +797,8 @@ type PrefilterKindFn =
 /// # Safety
 ///
 /// Callers must ensure that the `strat.kind.fallback` union field is set.
-unsafe fn prefilter_kind_fallback(
+#[allow(improper_ctypes_definitions)]
+unsafe extern "C" fn prefilter_kind_fallback(
     strat: &Prefilter,
     haystack: &[u8],
 ) -> Option<usize> {
@@ -794,7 +812,8 @@ unsafe fn prefilter_kind_fallback(
 ///
 /// Callers must ensure that the `strat.kind.sse2` union field is set.
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-unsafe fn prefilter_kind_sse2(
+#[allow(improper_ctypes_definitions)]
+unsafe extern "C" fn prefilter_kind_sse2(
     strat: &Prefilter,
     haystack: &[u8],
 ) -> Option<usize> {
@@ -813,7 +832,8 @@ unsafe fn prefilter_kind_sse2(
 ///
 /// Callers must ensure that the `strat.kind.avx2` union field is set.
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-unsafe fn prefilter_kind_avx2(
+#[allow(improper_ctypes_definitions)]
+unsafe extern "C" fn prefilter_kind_avx2(
     strat: &Prefilter,
     haystack: &[u8],
 ) -> Option<usize> {
@@ -832,7 +852,8 @@ unsafe fn prefilter_kind_avx2(
 ///
 /// Callers must ensure that the `strat.kind.simd128` union field is set.
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-unsafe fn prefilter_kind_simd128(
+#[allow(improper_ctypes_definitions)]
+unsafe extern "C" fn prefilter_kind_simd128(
     strat: &Prefilter,
     haystack: &[u8],
 ) -> Option<usize> {
@@ -851,7 +872,8 @@ unsafe fn prefilter_kind_simd128(
 ///
 /// Callers must ensure that the `strat.kind.neon` union field is set.
 #[cfg(target_arch = "aarch64")]
-unsafe fn prefilter_kind_neon(
+#[allow(improper_ctypes_definitions)]
+unsafe extern "C" fn prefilter_kind_neon(
     strat: &Prefilter,
     haystack: &[u8],
 ) -> Option<usize> {
