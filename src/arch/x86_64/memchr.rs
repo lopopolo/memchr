@@ -5,6 +5,48 @@ These routines efficiently dispatch to the best implementation based on what
 the CPU supports.
 */
 
+use core::ptr::NonNull;
+
+/// A return value that crosses the `C` ABI between `unsafe_ifunc!`'s routines.
+trait Abi {
+    /// The FFI-safe representation of this value.
+    type Repr;
+
+    /// Convert this value to its representation.
+    fn into_repr(self) -> Self::Repr;
+
+    /// Recover a value from its representation.
+    fn from_repr(repr: Self::Repr) -> Self;
+}
+
+impl Abi for Option<*const u8> {
+    type Repr = Option<NonNull<u8>>;
+
+    #[inline(always)]
+    fn into_repr(self) -> Option<NonNull<u8>> {
+        self.and_then(|ptr| NonNull::new(ptr as *mut u8))
+    }
+
+    #[inline(always)]
+    fn from_repr(repr: Option<NonNull<u8>>) -> Option<*const u8> {
+        repr.map(|ptr| ptr.as_ptr() as *const u8)
+    }
+}
+
+impl Abi for usize {
+    type Repr = usize;
+
+    #[inline(always)]
+    fn into_repr(self) -> usize {
+        self
+    }
+
+    #[inline(always)]
+    fn from_repr(repr: usize) -> usize {
+        repr
+    }
+}
+
 /// Provides a way to run a memchr-like function while amortizing the cost of
 /// runtime CPU feature detection.
 ///
@@ -40,7 +82,7 @@ the CPU supports.
 /// The routines use the `C` ABI, even though only Rust calls them, because a
 /// `C` function cannot unwind. The call through `FN` is otherwise opaque to the
 /// optimizer, so every caller would carry an unwind edge that no routine here
-/// can take.
+/// can take. `$retty` crosses that ABI as its `Abi::Repr`.
 ///
 /// Note that we use `#[cfg(target_feature = "sse2")]` below even though
 /// it shouldn't be strictly necessary because without it, it seems to
@@ -70,7 +112,7 @@ macro_rules! unsafe_ifunc {
         $hay_end:ident,
         $($needle:ident),+
     ) => {{
-        #![allow(improper_ctypes_definitions, unused_unsafe)]
+        #![allow(unused_unsafe)]
 
         use core::sync::atomic::{AtomicPtr, Ordering};
 
@@ -84,10 +126,12 @@ macro_rules! unsafe_ifunc {
             $($needle: u8),+,
             $hay_start: *const u8,
             $hay_end: *const u8,
-        ) -> $retty {
+        ) -> <$retty as Abi>::Repr {
             use crate::arch::x86_64::avx2::memchr::$memchrty;
-            $memchrty::new_unchecked($($needle),+)
-                .$memchrfind($hay_start, $hay_end)
+            Abi::into_repr(
+                $memchrty::new_unchecked($($needle),+)
+                    .$memchrfind($hay_start, $hay_end),
+            )
         }
 
         #[cfg(target_feature = "sse2")]
@@ -96,26 +140,30 @@ macro_rules! unsafe_ifunc {
             $($needle: u8),+,
             $hay_start: *const u8,
             $hay_end: *const u8,
-        ) -> $retty {
+        ) -> <$retty as Abi>::Repr {
             use crate::arch::x86_64::sse2::memchr::$memchrty;
-            $memchrty::new_unchecked($($needle),+)
-                .$memchrfind($hay_start, $hay_end)
+            Abi::into_repr(
+                $memchrty::new_unchecked($($needle),+)
+                    .$memchrfind($hay_start, $hay_end),
+            )
         }
 
         unsafe extern "C" fn find_fallback(
             $($needle: u8),+,
             $hay_start: *const u8,
             $hay_end: *const u8,
-        ) -> $retty {
+        ) -> <$retty as Abi>::Repr {
             use crate::arch::all::memchr::$memchrty;
-            $memchrty::new($($needle),+).$memchrfind($hay_start, $hay_end)
+            Abi::into_repr(
+                $memchrty::new($($needle),+).$memchrfind($hay_start, $hay_end),
+            )
         }
 
         unsafe extern "C" fn detect(
             $($needle: u8),+,
             $hay_start: *const u8,
             $hay_end: *const u8,
-        ) -> $retty {
+        ) -> <$retty as Abi>::Repr {
             let fun = {
                 #[cfg(not(target_feature = "sse2"))]
                 {
@@ -155,11 +203,11 @@ macro_rules! unsafe_ifunc {
         // to call $memchrty::$memchrfind.
         unsafe {
             let fun = FN.load(Ordering::Relaxed);
-            core::mem::transmute::<Fn, RealFn>(fun)(
+            Abi::from_repr(core::mem::transmute::<Fn, RealFn>(fun)(
                 $($needle),+,
                 $hay_start,
                 $hay_end,
-            )
+            ))
         }
     }};
 }
@@ -185,7 +233,7 @@ pub(crate) unsafe fn memchr_raw(
     unsafe_ifunc!(
         One,
         find_raw,
-        unsafe extern "C" fn(u8, *const u8, *const u8) -> Option<*const u8>,
+        unsafe extern "C" fn(u8, *const u8, *const u8) -> Option<NonNull<u8>>,
         Option<*const u8>,
         start,
         end,
@@ -208,7 +256,7 @@ pub(crate) unsafe fn memrchr_raw(
     unsafe_ifunc!(
         One,
         rfind_raw,
-        unsafe extern "C" fn(u8, *const u8, *const u8) -> Option<*const u8>,
+        unsafe extern "C" fn(u8, *const u8, *const u8) -> Option<NonNull<u8>>,
         Option<*const u8>,
         start,
         end,
@@ -237,7 +285,7 @@ pub(crate) unsafe fn memchr2_raw(
             u8,
             *const u8,
             *const u8,
-        ) -> Option<*const u8>,
+        ) -> Option<NonNull<u8>>,
         Option<*const u8>,
         start,
         end,
@@ -267,7 +315,7 @@ pub(crate) unsafe fn memrchr2_raw(
             u8,
             *const u8,
             *const u8,
-        ) -> Option<*const u8>,
+        ) -> Option<NonNull<u8>>,
         Option<*const u8>,
         start,
         end,
@@ -299,7 +347,7 @@ pub(crate) unsafe fn memchr3_raw(
             u8,
             *const u8,
             *const u8,
-        ) -> Option<*const u8>,
+        ) -> Option<NonNull<u8>>,
         Option<*const u8>,
         start,
         end,
@@ -332,7 +380,7 @@ pub(crate) unsafe fn memrchr3_raw(
             u8,
             *const u8,
             *const u8,
-        ) -> Option<*const u8>,
+        ) -> Option<NonNull<u8>>,
         Option<*const u8>,
         start,
         end,
