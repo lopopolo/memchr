@@ -37,6 +37,11 @@ the CPU supports.
 /// routines with the signature above, and then define memchr routines using
 /// regular slices on top of them.
 ///
+/// The routines use the `C` ABI, even though only Rust calls them, because a
+/// `C` function cannot unwind. The call through `FN` is otherwise opaque to the
+/// optimizer, so every caller would carry an unwind edge that no routine here
+/// can take.
+///
 /// Note that we use `#[cfg(target_feature = "sse2")]` below even though
 /// it shouldn't be strictly necessary because without it, it seems to
 /// cause the compiler to blow up. I guess it can't handle a function
@@ -65,7 +70,7 @@ macro_rules! unsafe_ifunc {
         $hay_end:ident,
         $($needle:ident),+
     ) => {{
-        #![allow(unused_unsafe)]
+        #![allow(improper_ctypes_definitions, unused_unsafe)]
 
         use core::sync::atomic::{AtomicPtr, Ordering};
 
@@ -75,7 +80,7 @@ macro_rules! unsafe_ifunc {
 
         #[cfg(target_feature = "sse2")]
         #[target_feature(enable = "sse2", enable = "avx2")]
-        unsafe fn find_avx2(
+        unsafe extern "C" fn find_avx2(
             $($needle: u8),+,
             $hay_start: *const u8,
             $hay_end: *const u8,
@@ -87,7 +92,7 @@ macro_rules! unsafe_ifunc {
 
         #[cfg(target_feature = "sse2")]
         #[target_feature(enable = "sse2")]
-        unsafe fn find_sse2(
+        unsafe extern "C" fn find_sse2(
             $($needle: u8),+,
             $hay_start: *const u8,
             $hay_end: *const u8,
@@ -97,7 +102,7 @@ macro_rules! unsafe_ifunc {
                 .$memchrfind($hay_start, $hay_end)
         }
 
-        unsafe fn find_fallback(
+        unsafe extern "C" fn find_fallback(
             $($needle: u8),+,
             $hay_start: *const u8,
             $hay_end: *const u8,
@@ -106,7 +111,7 @@ macro_rules! unsafe_ifunc {
             $memchrty::new($($needle),+).$memchrfind($hay_start, $hay_end)
         }
 
-        unsafe fn detect(
+        unsafe extern "C" fn detect(
             $($needle: u8),+,
             $hay_start: *const u8,
             $hay_end: *const u8,
@@ -180,7 +185,7 @@ pub(crate) unsafe fn memchr_raw(
     unsafe_ifunc!(
         One,
         find_raw,
-        unsafe fn(u8, *const u8, *const u8) -> Option<*const u8>,
+        unsafe extern "C" fn(u8, *const u8, *const u8) -> Option<*const u8>,
         Option<*const u8>,
         start,
         end,
@@ -203,7 +208,7 @@ pub(crate) unsafe fn memrchr_raw(
     unsafe_ifunc!(
         One,
         rfind_raw,
-        unsafe fn(u8, *const u8, *const u8) -> Option<*const u8>,
+        unsafe extern "C" fn(u8, *const u8, *const u8) -> Option<*const u8>,
         Option<*const u8>,
         start,
         end,
@@ -227,7 +232,12 @@ pub(crate) unsafe fn memchr2_raw(
     unsafe_ifunc!(
         Two,
         find_raw,
-        unsafe fn(u8, u8, *const u8, *const u8) -> Option<*const u8>,
+        unsafe extern "C" fn(
+            u8,
+            u8,
+            *const u8,
+            *const u8,
+        ) -> Option<*const u8>,
         Option<*const u8>,
         start,
         end,
@@ -252,7 +262,12 @@ pub(crate) unsafe fn memrchr2_raw(
     unsafe_ifunc!(
         Two,
         rfind_raw,
-        unsafe fn(u8, u8, *const u8, *const u8) -> Option<*const u8>,
+        unsafe extern "C" fn(
+            u8,
+            u8,
+            *const u8,
+            *const u8,
+        ) -> Option<*const u8>,
         Option<*const u8>,
         start,
         end,
@@ -278,7 +293,13 @@ pub(crate) unsafe fn memchr3_raw(
     unsafe_ifunc!(
         Three,
         find_raw,
-        unsafe fn(u8, u8, u8, *const u8, *const u8) -> Option<*const u8>,
+        unsafe extern "C" fn(
+            u8,
+            u8,
+            u8,
+            *const u8,
+            *const u8,
+        ) -> Option<*const u8>,
         Option<*const u8>,
         start,
         end,
@@ -305,7 +326,13 @@ pub(crate) unsafe fn memrchr3_raw(
     unsafe_ifunc!(
         Three,
         rfind_raw,
-        unsafe fn(u8, u8, u8, *const u8, *const u8) -> Option<*const u8>,
+        unsafe extern "C" fn(
+            u8,
+            u8,
+            u8,
+            *const u8,
+            *const u8,
+        ) -> Option<*const u8>,
         Option<*const u8>,
         start,
         end,
@@ -330,7 +357,7 @@ pub(crate) unsafe fn count_raw(
     unsafe_ifunc!(
         One,
         count_raw,
-        unsafe fn(u8, *const u8, *const u8) -> usize,
+        unsafe extern "C" fn(u8, *const u8, *const u8) -> usize,
         usize,
         start,
         end,
