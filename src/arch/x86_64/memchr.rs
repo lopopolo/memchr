@@ -7,44 +7,20 @@ the CPU supports.
 
 use core::ptr::NonNull;
 
-/// A return value that crosses the `C` ABI between `unsafe_ifunc!`'s routines.
-trait Abi {
-    /// The FFI-safe representation of this value.
-    type Repr;
-
-    /// Convert this value to its representation.
-    fn into_repr(self) -> Self::Repr;
-
-    /// Recover a value from its representation.
-    fn from_repr(repr: Self::Repr) -> Self;
+/// Convert a match to the FFI-safe form the dispatched routines return.
+///
+/// # Safety
+///
+/// A match must be a non-null pointer into the haystack.
+#[inline(always)]
+unsafe fn into_match(ptr: Option<*const u8>) -> Option<NonNull<u8>> {
+    ptr.map(|ptr| NonNull::new_unchecked(ptr as *mut u8))
 }
 
-impl Abi for Option<*const u8> {
-    type Repr = Option<NonNull<u8>>;
-
-    #[inline(always)]
-    fn into_repr(self) -> Option<NonNull<u8>> {
-        self.and_then(|ptr| NonNull::new(ptr as *mut u8))
-    }
-
-    #[inline(always)]
-    fn from_repr(repr: Option<NonNull<u8>>) -> Option<*const u8> {
-        repr.map(|ptr| ptr.as_ptr() as *const u8)
-    }
-}
-
-impl Abi for usize {
-    type Repr = usize;
-
-    #[inline(always)]
-    fn into_repr(self) -> usize {
-        self
-    }
-
-    #[inline(always)]
-    fn from_repr(repr: usize) -> usize {
-        repr
-    }
+/// Convert the result of a dispatched routine back to a raw pointer.
+#[inline(always)]
+fn from_match(ptr: Option<NonNull<u8>>) -> Option<*const u8> {
+    ptr.map(|ptr| ptr.as_ptr() as *const u8)
 }
 
 /// Provides a way to run a memchr-like function while amortizing the cost of
@@ -82,7 +58,8 @@ impl Abi for usize {
 /// The routines use the `C` ABI, even though only Rust calls them, because a
 /// `C` function cannot unwind. The call through `FN` is otherwise opaque to the
 /// optimizer, so every caller would carry an unwind edge that no routine here
-/// can take. `$retty` crosses that ABI as its `Abi::Repr`.
+/// can take. `$into` and `$from` convert between `$retty` and
+/// the FFI-safe `$abity` these routines return.
 ///
 /// Note that we use `#[cfg(target_feature = "sse2")]` below even though
 /// it shouldn't be strictly necessary because without it, it seems to
@@ -107,7 +84,10 @@ macro_rules! unsafe_ifunc {
         $memchrty:ident,
         $memchrfind:ident,
         $fnty:ty,
+        $abity:ty,
         $retty:ty,
+        $into:path,
+        $from:path,
         $hay_start:ident,
         $hay_end:ident,
         $($needle:ident),+
@@ -126,9 +106,9 @@ macro_rules! unsafe_ifunc {
             $($needle: u8),+,
             $hay_start: *const u8,
             $hay_end: *const u8,
-        ) -> <$retty as Abi>::Repr {
+        ) -> $abity {
             use crate::arch::x86_64::avx2::memchr::$memchrty;
-            Abi::into_repr(
+            $into(
                 $memchrty::new_unchecked($($needle),+)
                     .$memchrfind($hay_start, $hay_end),
             )
@@ -140,9 +120,9 @@ macro_rules! unsafe_ifunc {
             $($needle: u8),+,
             $hay_start: *const u8,
             $hay_end: *const u8,
-        ) -> <$retty as Abi>::Repr {
+        ) -> $abity {
             use crate::arch::x86_64::sse2::memchr::$memchrty;
-            Abi::into_repr(
+            $into(
                 $memchrty::new_unchecked($($needle),+)
                     .$memchrfind($hay_start, $hay_end),
             )
@@ -152,9 +132,9 @@ macro_rules! unsafe_ifunc {
             $($needle: u8),+,
             $hay_start: *const u8,
             $hay_end: *const u8,
-        ) -> <$retty as Abi>::Repr {
+        ) -> $abity {
             use crate::arch::all::memchr::$memchrty;
-            Abi::into_repr(
+            $into(
                 $memchrty::new($($needle),+).$memchrfind($hay_start, $hay_end),
             )
         }
@@ -163,7 +143,7 @@ macro_rules! unsafe_ifunc {
             $($needle: u8),+,
             $hay_start: *const u8,
             $hay_end: *const u8,
-        ) -> <$retty as Abi>::Repr {
+        ) -> $abity {
             let fun = {
                 #[cfg(not(target_feature = "sse2"))]
                 {
@@ -203,7 +183,7 @@ macro_rules! unsafe_ifunc {
         // to call $memchrty::$memchrfind.
         unsafe {
             let fun = FN.load(Ordering::Relaxed);
-            Abi::from_repr(core::mem::transmute::<Fn, RealFn>(fun)(
+            $from(core::mem::transmute::<Fn, RealFn>(fun)(
                 $($needle),+,
                 $hay_start,
                 $hay_end,
@@ -234,7 +214,10 @@ pub(crate) unsafe fn memchr_raw(
         One,
         find_raw,
         unsafe extern "C" fn(u8, *const u8, *const u8) -> Option<NonNull<u8>>,
+        Option<NonNull<u8>>,
         Option<*const u8>,
+        into_match,
+        from_match,
         start,
         end,
         n1
@@ -257,7 +240,10 @@ pub(crate) unsafe fn memrchr_raw(
         One,
         rfind_raw,
         unsafe extern "C" fn(u8, *const u8, *const u8) -> Option<NonNull<u8>>,
+        Option<NonNull<u8>>,
         Option<*const u8>,
+        into_match,
+        from_match,
         start,
         end,
         n1
@@ -286,7 +272,10 @@ pub(crate) unsafe fn memchr2_raw(
             *const u8,
             *const u8,
         ) -> Option<NonNull<u8>>,
+        Option<NonNull<u8>>,
         Option<*const u8>,
+        into_match,
+        from_match,
         start,
         end,
         n1,
@@ -316,7 +305,10 @@ pub(crate) unsafe fn memrchr2_raw(
             *const u8,
             *const u8,
         ) -> Option<NonNull<u8>>,
+        Option<NonNull<u8>>,
         Option<*const u8>,
+        into_match,
+        from_match,
         start,
         end,
         n1,
@@ -348,7 +340,10 @@ pub(crate) unsafe fn memchr3_raw(
             *const u8,
             *const u8,
         ) -> Option<NonNull<u8>>,
+        Option<NonNull<u8>>,
         Option<*const u8>,
+        into_match,
+        from_match,
         start,
         end,
         n1,
@@ -381,7 +376,10 @@ pub(crate) unsafe fn memrchr3_raw(
             *const u8,
             *const u8,
         ) -> Option<NonNull<u8>>,
+        Option<NonNull<u8>>,
         Option<*const u8>,
+        into_match,
+        from_match,
         start,
         end,
         n1,
@@ -407,6 +405,9 @@ pub(crate) unsafe fn count_raw(
         count_raw,
         unsafe extern "C" fn(u8, *const u8, *const u8) -> usize,
         usize,
+        usize,
+        core::convert::identity,
+        core::convert::identity,
         start,
         end,
         n1
